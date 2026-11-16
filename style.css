@@ -5,9 +5,14 @@
   --radius:16px;
   --font:"Inter","DM Sans","Hiragino Sans","Yu Gothic UI","Yu Gothic",system-ui,sans-serif;
 }
+/* ダーク配色: 端末設定に追従(auto)、またはアプリで dark を選択 */
 @media (prefers-color-scheme:dark){
-  :root{--bg:#111513;--surface:#1b201d;--ink:#eef2ee;--sub:#8d9a92;--line:#2a312c;--green:#8cc46d;--green-d:#a5d688;--green-soft:#243222;--water:#6aa7ee}
+  :root:not([data-theme="light"]){--bg:#111513;--surface:#1b201d;--ink:#eef2ee;--sub:#8d9a92;--line:#2a312c;--green:#8cc46d;--green-d:#a5d688;--green-soft:#243222;--water:#6aa7ee;color-scheme:dark}
 }
+:root[data-theme="dark"]{--bg:#111513;--surface:#1b201d;--ink:#eef2ee;--sub:#8d9a92;--line:#2a312c;--green:#8cc46d;--green-d:#a5d688;--green-soft:#243222;--water:#6aa7ee;color-scheme:dark}
+.themes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.themes button{border:2px solid transparent;border-radius:12px;background:var(--bg);padding:12px 4px;font-size:13px;font-weight:600;min-height:48px}
+.themes button.on{border-color:var(--green);color:var(--green-d)}
 *{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
 html{-webkit-text-size-adjust:100%}
 body{background:var(--bg);color:var(--ink);font-family:var(--font);letter-spacing:.03em;line-height:1.5;overscroll-behavior-y:none}
