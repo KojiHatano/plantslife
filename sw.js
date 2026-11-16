@@ -1,6 +1,6 @@
 'use strict';
-const CACHE = 'plantslife-v1';
-const SHELL = ['./', 'index.html', 'style.css', 'db.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
+const CACHE = 'plantslife-v2';
+const SHELL = ['./', 'index.html', 'style.css', 'db.js', 'app.js', 'manifest.webmanifest', 'fonts/DancingScript.ttf','icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
