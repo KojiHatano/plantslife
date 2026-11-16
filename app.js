@@ -88,15 +88,74 @@ async function shrink(file, max = 1280) {
     return await new Promise(r => c.toBlob(r, 'image/jpeg', .82));
   } finally { URL.revokeObjectURL(u); }
 }
-function pickFile(cb) {
+// 写真選択 → 切り抜き画面 → 縮小JPEGのBlobをcbへ。opts.skip=true で「切り抜きなし」も選べる
+function pickFile(cb, opts = {}) {
   const f = $('#file');
   f.value = '';
   f.onchange = async () => {
     const file = f.files[0];
     if (!file) return;
-    try { cb(await shrink(file)); } catch { toast('画像を読み込めませんでした'); }
+    try { const b = await openCrop(file, opts); if (b) cb(b); } catch { toast('画像を読み込めませんでした'); }
   };
   f.click();
+}
+
+// 切り抜き画面(正方形)。ピンチ/ドラッグ/スライダー/ホイールで範囲を決める。Blob、キャンセル時はnullで解決
+function openCrop(file, { skip = false } = {}) {
+  return new Promise(async resolve => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.src = url;
+    try { await img.decode(); } catch { URL.revokeObjectURL(url); return resolve(null); }
+    const root = $('#crop');
+    const V = Math.max(200, Math.min(window.innerWidth - 32, 420));
+    root.innerHTML = `<div class="cwrap"><p class="chint">ピンチで拡大、ドラッグで位置を調整</p>
+      <div class="cview" style="width:${V}px;height:${V}px"><img src="${url}" alt="" draggable="false"></div>
+      <input type="range" class="czoom" min="0" max="100" value="0" aria-label="ズーム">
+      <div class="cbtns"><button class="ghost" data-c="cancel">キャンセル</button>${skip ? '<button class="ghost" data-c="skip">切り抜きなし</button>' : ''}<button class="primary" data-c="ok">決定</button></div></div>`;
+    root.classList.add('on');
+    const el = root.querySelector('img'), view = root.querySelector('.cview'), zoom = root.querySelector('.czoom');
+    const W = img.naturalWidth, H = img.naturalHeight;
+    const min = V / Math.min(W, H), max = min * 6;
+    let s = min, x = (V - W * s) / 2, y = (V - H * s) / 2;
+    el.style.width = W + 'px'; el.style.height = H + 'px';
+    const apply = () => {
+      s = Math.min(max, Math.max(min, s));
+      x = Math.min(0, Math.max(V - W * s, x)); y = Math.min(0, Math.max(V - H * s, y));
+      el.style.transform = `translate(${x}px,${y}px) scale(${s})`;
+      zoom.value = Math.round((s - min) / (max - min) * 100);
+    };
+    const zoomAt = (ns, cx, cy) => { ns = Math.min(max, Math.max(min, ns)); const k = ns / s; x = cx - (cx - x) * k; y = cy - (cy - y) * k; s = ns; apply(); };
+    apply();
+    const pts = new Map(); let last = null;
+    view.onpointerdown = e => { try { view.setPointerCapture(e.pointerId); } catch { /* 無視 */ } pts.set(e.pointerId, [e.clientX, e.clientY]); last = null; };
+    view.onpointermove = e => {
+      if (!pts.has(e.pointerId)) return;
+      const prev = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+      const a = [...pts.values()];
+      if (a.length === 1) { x += e.clientX - prev[0]; y += e.clientY - prev[1]; apply(); }
+      else if (a.length === 2) {
+        const d = Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]), r = view.getBoundingClientRect();
+        if (last) zoomAt(s * d / last, (a[0][0] + a[1][0]) / 2 - r.left, (a[0][1] + a[1][1]) / 2 - r.top);
+        last = d;
+      }
+    };
+    view.onpointerup = view.onpointercancel = e => { pts.delete(e.pointerId); last = null; };
+    view.onwheel = e => { e.preventDefault(); const r = view.getBoundingClientRect(); zoomAt(s * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX - r.left, e.clientY - r.top); };
+    zoom.oninput = () => zoomAt(min + (max - min) * zoom.value / 100, V / 2, V / 2);
+    const done = v => { root.classList.remove('on'); root.innerHTML = ''; URL.revokeObjectURL(url); resolve(v); };
+    root.onclick = async e => {
+      const c = e.target.dataset.c;
+      if (!c) return;
+      if (c === 'cancel') return done(null);
+      if (c === 'skip') { const b = await shrink(file); return done(b); }
+      // 切り抜き範囲を元画像から切り出す(拡大しすぎない出力サイズ、最大1024px)
+      const OUT = Math.max(64, Math.min(1024, Math.round(V / s)));
+      const cv = document.createElement('canvas'); cv.width = cv.height = OUT;
+      cv.getContext('2d').drawImage(img, -x / s, -y / s, V / s, V / s, 0, 0, OUT, OUT);
+      cv.toBlob(b => done(b), 'image/jpeg', .85);
+    };
+  });
 }
 
 /* ---------- データ操作 ---------- */
@@ -422,9 +481,9 @@ document.addEventListener('click', async e => {
       case 'sel-day': S.sel = el.dataset.v; render(); break;
       case 'pause': { const p = plantOf(id); p.paused = !p.paused; await savePlant(p); renderDetail(); toast(p.paused ? '管理休止にしました' : '管理を再開しました'); break; }
       case 'add-log': logForm(id, el.dataset.t); break;
-      case 'pick-log-photo': pickFile(b => { logPhoto = b; const pv = $('#pv'); pv.style.backgroundImage = `url('${URL.createObjectURL(b)}')`; pv.textContent = ''; }); break;
+      case 'pick-log-photo': pickFile(b => { logPhoto = b; const pv = $('#pv'); pv.style.backgroundImage = `url('${URL.createObjectURL(b)}')`; pv.textContent = ''; }, { skip: true }); break;
       case 'save-log': await submitLog(id, el.dataset.t); break;
-      case 'quick-photo': pickFile(async b => { await addLog(id, 'note', { photo: b }); render(); toast('写真を追加しました'); }); break;
+      case 'quick-photo': pickFile(async b => { await addLog(id, 'note', { photo: b }); render(); toast('写真を追加しました'); }, { skip: true }); break;
       case 'change-photo': pickFile(async b => { const p = plantOf(id); p.photo = b; await savePlant(p); render(); }); break;
       case 'del-log': if (confirm('この記録を削除しますか？')) { await delLog(+el.dataset.lid); render(); } break;
       case 'view-photo': {

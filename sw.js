@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'plantslife-v3';
+const CACHE = 'plantslife-v4';
 const SHELL = ['./', 'index.html', 'style.css', 'db.js', 'app.js', 'manifest.webmanifest', 'fonts/DancingScript.ttf','icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
