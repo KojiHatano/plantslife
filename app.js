@@ -243,8 +243,16 @@ function histView() {
 }
 
 /* ---------- データ(バックアップ) ---------- */
+// 表示テーマ: auto(端末に合わせる) / light / dark。初回のちらつき防止のためlocalStorageにも控える
+function applyTheme(t) {
+  const r = document.documentElement;
+  if (t === 'light' || t === 'dark') r.dataset.theme = t; else delete r.dataset.theme;
+  try { t === 'light' || t === 'dark' ? localStorage.setItem('pl-theme', t) : localStorage.removeItem('pl-theme'); } catch { /* 無視 */ }
+}
 function dataView() {
-  return `<div class="day"><h3>データのバックアップ</h3>
+  const th = S.set.theme || 'auto';
+  return `<div class="day"><h3>表示テーマ</h3><div class="themes">${[['auto', '端末に合わせる'], ['light', 'ライト'], ['dark', 'ダーク']].map(([k, n]) => `<button class="${th === k ? 'on' : ''}" data-act="set-theme" data-v="${k}">${n}</button>`).join('')}</div></div>
+    <div class="day"><h3>データのバックアップ</h3>
     <p style="font-size:13px;color:var(--sub);margin-bottom:10px">植物・記録・写真はこの端末内にだけ保存されています。機種変更や削除に備えて、定期的に書き出してください。</p>
     <button class="primary" data-act="export">バックアップを書き出す（JSON）</button>
     <button class="ghost" data-act="import">バックアップから復元</button>
@@ -408,6 +416,7 @@ document.addEventListener('click', async e => {
       case 'set-layout': await saveSet('layout', el.dataset.v); listOptsSheet(); renderGrid(); break;
       case 'set-sort': await saveSet('sort', el.dataset.v); listOptsSheet(); renderGrid(); break;
       case 'set-rev': await saveSet('rev', !S.set.rev); listOptsSheet(); renderGrid(); break;
+      case 'set-theme': await saveSet('theme', el.dataset.v); applyTheme(el.dataset.v); render(); break;
       case 'hist-view': S.hist = el.dataset.v; render(); break;
       case 'month': { const [y, m] = S.month.split('-').map(Number); const d = new Date(y, m - 1 + Number(el.dataset.v), 1); S.month = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; render(); break; }
       case 'sel-day': S.sel = el.dataset.v; render(); break;
@@ -455,6 +464,7 @@ document.addEventListener('change', async e => {
   try { navigator.storage?.persist?.(); } catch { /* 無視 */ }
   S.plants = await DB.all('plants'); S.logs = await DB.all('logs');
   for (const r of await DB.all('settings')) S.set[r.key] = r.value;
+  applyTheme(S.set.theme || 'auto');
   reindex(); render();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
 })();
