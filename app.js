@@ -1,7 +1,7 @@
 'use strict';
 /* PlantsLife - 植物管理PWA。データは端末内(IndexedDB)のみに保存し、外部へ送信しない。 */
 
-const APP_VERSION = 'v5'; // sw.js の CACHE 名と揃える
+const APP_VERSION = 'v5'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
 
 /* ---------- ユーティリティ ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -320,8 +320,8 @@ function dataView() {
     <p style="font-size:12px;color:var(--sub);margin-top:10px">復元すると現在のデータは置き換えられます。</p></div>
     <div class="day"><h3>保存状況</h3><div class="row">植物<small>${S.plants.length}株</small></div><div class="row">記録<small>${S.logs.length}件</small></div></div>
     <div class="day"><h3>アプリ</h3><div class="row">バージョン<small>${APP_VERSION}</small></div>
-    <button class="ghost" data-act="refresh-app">最新に更新</button>
-    <p style="font-size:12px;color:var(--sub);margin-top:8px">画面が古いときに押してください。植物・写真・記録のデータは消えません。</p></div>`;
+    <button class="ghost" data-act="update-app">更新を確認して適用</button>
+    <p style="font-size:12px;color:var(--sub);margin-top:8px">アプリは自動では更新されません。このボタンを押したときだけ最新版を確認し、新しければ更新します。植物・写真・記録のデータは消えません。</p></div>`;
 }
 const b2d = b => new Promise(r => { if (!b) return r(null); const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); });
 async function exportAll() {
@@ -445,6 +445,25 @@ function render() {
   renderDetail();
 }
 
+/* ---------- 手動更新 ---------- */
+// 最新版のバージョンを確認し、異なる場合だけ更新する。
+// Service Workerとキャッシュだけを消して再読み込みする(IndexedDBのデータには触れない)。
+async function updateApp() {
+  let latest;
+  try {
+    const t = await (await fetch('app.js', { cache: 'no-store' })).text();
+    latest = (t.match(/APP_VERSION\s*=\s*'([^']+)'/) || [])[1];
+  } catch { return toast('確認できませんでした（オフラインの可能性があります）'); }
+  if (!latest) return toast('バージョンを確認できませんでした');
+  if (latest === APP_VERSION) return toast(`最新です（${APP_VERSION}）`);
+  toast(`${latest} に更新します`);
+  try {
+    for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+    for (const k of await caches.keys()) await caches.delete(k);
+  } catch { /* 無視 */ }
+  setTimeout(() => location.reload(), 600);
+}
+
 /* ---------- イベント ---------- */
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]');
@@ -505,11 +524,7 @@ document.addEventListener('click', async e => {
         }
         break;
       }
-      case 'refresh-app': {
-        // Service Workerとキャッシュだけを消して再読み込み(IndexedDBのデータは触らない)
-        try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); for (const k of await caches.keys()) await caches.delete(k); } catch { /* 無視 */ }
-        location.reload(); break;
-      }
+      case 'update-app': await updateApp(); break;
       case 'export': await exportAll(); break;
       case 'import': { const f = $('#import'); f.value = ''; f.onchange = () => f.files[0] && importAll(f.files[0]); f.click(); break; }
     }
@@ -535,12 +550,5 @@ document.addEventListener('change', async e => {
   for (const r of await DB.all('settings')) S.set[r.key] = r.value;
   applyTheme(S.set.theme || 'auto');
   reindex(); render();
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    const had = !!navigator.serviceWorker.controller;
-    // 新しいService Workerに切り替わったら、操作中でなければ一度だけ再読み込みして最新にする
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (had && !window.__reloaded && !$('#sheet').classList.contains('on') && !$('#crop').classList.contains('on')) { window.__reloaded = true; location.reload(); }
-    });
-    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => { });
-  }
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => { });
 })();
