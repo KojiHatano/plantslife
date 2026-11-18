@@ -1,7 +1,7 @@
 'use strict';
 /* PlantsLife - 植物管理PWA。データは端末内(IndexedDB)のみに保存し、外部へ送信しない。 */
 
-const APP_VERSION = 'v9'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
+const APP_VERSION = 'v10'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
 
 /* ---------- ユーティリティ ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -201,11 +201,10 @@ function closeSheet() { $('#sheet').classList.remove('on'); $('#mask').classList
 // 都道府県庁所在地のおおよその座標(小数2桁)。選んだ地域の座標だけを天気サービスに送る。
 const PREFS = [['北海道', 43.06, 141.35], ['青森県', 40.82, 140.74], ['岩手県', 39.70, 141.15], ['宮城県', 38.27, 140.87], ['秋田県', 39.72, 140.10], ['山形県', 38.24, 140.36], ['福島県', 37.75, 140.47], ['茨城県', 36.34, 140.45], ['栃木県', 36.57, 139.88], ['群馬県', 36.39, 139.06], ['埼玉県', 35.86, 139.65], ['千葉県', 35.61, 140.12], ['東京都', 35.69, 139.69], ['神奈川県', 35.45, 139.64], ['新潟県', 37.90, 139.02], ['富山県', 36.70, 137.21], ['石川県', 36.59, 136.63], ['福井県', 36.07, 136.22], ['山梨県', 35.66, 138.57], ['長野県', 36.65, 138.18], ['岐阜県', 35.39, 136.72], ['静岡県', 34.98, 138.38], ['愛知県', 35.18, 136.91], ['三重県', 34.73, 136.51], ['滋賀県', 35.00, 135.87], ['京都府', 35.02, 135.76], ['大阪府', 34.69, 135.52], ['兵庫県', 34.69, 135.18], ['奈良県', 34.69, 135.83], ['和歌山県', 34.23, 135.17], ['鳥取県', 35.50, 134.24], ['島根県', 35.47, 133.05], ['岡山県', 34.66, 133.93], ['広島県', 34.40, 132.46], ['山口県', 34.19, 131.47], ['徳島県', 34.07, 134.56], ['香川県', 34.34, 134.04], ['愛媛県', 33.84, 132.77], ['高知県', 33.56, 133.53], ['福岡県', 33.61, 130.42], ['佐賀県', 33.25, 130.30], ['長崎県', 32.74, 129.87], ['熊本県', 32.79, 130.74], ['大分県', 33.24, 131.61], ['宮崎県', 31.91, 131.42], ['鹿児島県', 31.56, 130.56], ['沖縄県', 26.21, 127.68]];
 const wmo = c => c === 0 ? '☀️' : c <= 2 ? '🌤️' : c === 3 ? '☁️' : c <= 48 ? '🌫️' : c <= 57 ? '🌦️' : c <= 67 ? '🌧️' : c <= 77 ? '🌨️' : c <= 82 ? '🌦️' : c <= 86 ? '🌨️' : '⛈️';
-// 今日を含む週(日〜土)の7日分
+// 「今週」= 今日から7日間(今日を含む)
 function weekDays() {
   const t = todayStr();
-  const s = addDays(t, -fromYmd(t).getDay());
-  return Array.from({ length: 7 }, (_, k) => addDays(s, k));
+  return Array.from({ length: 7 }, (_, k) => addDays(t, k));
 }
 async function loadWeather(force = false) {
   const pref = S.set.pref, pr = PREFS.find(p => p[0] === pref);
@@ -215,7 +214,7 @@ async function loadWeather(force = false) {
   if (!force && S.wFail && Date.now() - S.wFail < 5 * 60e3) return; // 失敗直後は再試行しない
   S.wBusy = true;
   try {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${pr[1]}&longitude=${pr[2]}&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=Asia%2FTokyo&past_days=7&forecast_days=7`;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${pr[1]}&longitude=${pr[2]}&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=Asia%2FTokyo&forecast_days=7`;
     const ac = new AbortController(), to = setTimeout(() => ac.abort(), 8000);
     const r = await fetch(url, { signal: ac.signal });
     clearTimeout(to);
@@ -277,12 +276,9 @@ function scheduleView() {
   if (!S.openDays) S.openDays = new Set([t]);
   let h = '<div class="sec" style="margin-top:6px">📅 今週の予定 <span>・水やりは予定、肥料は記録済みのみ</span></div>';
   for (const ds of days) {
-    const dt = fromYmd(ds), isToday = ds === t, past = ds < t;
+    const dt = fromYmd(ds), isToday = ds === t;
     let rows = '', nw = 0, nf = 0;
-    if (past) {
-      const ls = S.logs.filter(l => l.date === ds && (l.type === 'water' || l.type === 'fert')).sort((a, b) => a.ts - b.ts);
-      for (const l of ls) { const p = plantOf(l.plantId); if (!p) continue; rows += dayRow(p, ICON[l.type], LABEL[l.type] + '済み'); l.type === 'water' ? nw++ : nf++; }
-    } else if (isToday) {
+    if (isToday) {
       const list = infos.filter(x => !x.p.paused && ((x.i.until !== null && x.i.until <= 0) || x.i.wToday || x.i.fToday))
         .sort((a, b) => (a.i.until ?? 9e9) - (b.i.until ?? 9e9));
       rows = list.map(todayRow).join('');
@@ -291,7 +287,7 @@ function scheduleView() {
       for (const { p, i } of infos) if (scheduleDates(p, i, end).includes(ds)) { rows += dayRow(p, '💧', '水やり予定'); nw++; }
     }
     const open = S.openDays.has(ds);
-    h += `<div class="dsec" id="d-${ds}"><button class="dh ${open ? 'open' : ''}" data-act="toggle-day" data-v="${ds}"><span class="dn">${isToday ? '今日' : WD[dt.getDay()] + '曜日'}</span><span class="dd">${fmtMD(ds)}</span><span class="dc">${nw ? `💧${nw}` : ''}${nf ? ` 🌱${nf}` : ''}</span><span class="car">▾</span></button>${open ? `<div class="db">${rows || `<div class="nil" style="padding:8px 0">${past ? '記録はありません' : '予定はありません'}</div>`}</div>` : ''}</div>`;
+    h += `<div class="dsec" id="d-${ds}"><button class="dh ${open ? 'open' : ''}" data-act="toggle-day" data-v="${ds}"><span class="dn">${isToday ? '今日' : WD[dt.getDay()] + '曜日'}</span><span class="dd">${fmtMD(ds)}</span><span class="dc">${nw ? `💧${nw}` : ''}${nf ? ` 🌱${nf}` : ''}</span><span class="car">▾</span></button>${open ? `<div class="db">${rows || `<div class="nil" style="padding:8px 0">予定はありません</div>`}</div>` : ''}</div>`;
   }
   return h;
 }
