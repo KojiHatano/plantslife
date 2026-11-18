@@ -1,7 +1,7 @@
 'use strict';
 /* PlantsLife - 植物管理PWA。データは端末内(IndexedDB)のみに保存し、外部へ送信しない。 */
 
-const APP_VERSION = 'v7'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
+const APP_VERSION = 'v8'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
 
 /* ---------- ユーティリティ ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -197,28 +197,112 @@ function openSheet(html) {
 }
 function closeSheet() { $('#sheet').classList.remove('on'); $('#mask').classList.remove('on'); }
 
+/* ---------- 天気(Open-Meteo) ---------- */
+// 都道府県庁所在地のおおよその座標(小数2桁)。選んだ地域の座標だけを天気サービスに送る。
+const PREFS = [['北海道', 43.06, 141.35], ['青森県', 40.82, 140.74], ['岩手県', 39.70, 141.15], ['宮城県', 38.27, 140.87], ['秋田県', 39.72, 140.10], ['山形県', 38.24, 140.36], ['福島県', 37.75, 140.47], ['茨城県', 36.34, 140.45], ['栃木県', 36.57, 139.88], ['群馬県', 36.39, 139.06], ['埼玉県', 35.86, 139.65], ['千葉県', 35.61, 140.12], ['東京都', 35.69, 139.69], ['神奈川県', 35.45, 139.64], ['新潟県', 37.90, 139.02], ['富山県', 36.70, 137.21], ['石川県', 36.59, 136.63], ['福井県', 36.07, 136.22], ['山梨県', 35.66, 138.57], ['長野県', 36.65, 138.18], ['岐阜県', 35.39, 136.72], ['静岡県', 34.98, 138.38], ['愛知県', 35.18, 136.91], ['三重県', 34.73, 136.51], ['滋賀県', 35.00, 135.87], ['京都府', 35.02, 135.76], ['大阪府', 34.69, 135.52], ['兵庫県', 34.69, 135.18], ['奈良県', 34.69, 135.83], ['和歌山県', 34.23, 135.17], ['鳥取県', 35.50, 134.24], ['島根県', 35.47, 133.05], ['岡山県', 34.66, 133.93], ['広島県', 34.40, 132.46], ['山口県', 34.19, 131.47], ['徳島県', 34.07, 134.56], ['香川県', 34.34, 134.04], ['愛媛県', 33.84, 132.77], ['高知県', 33.56, 133.53], ['福岡県', 33.61, 130.42], ['佐賀県', 33.25, 130.30], ['長崎県', 32.74, 129.87], ['熊本県', 32.79, 130.74], ['大分県', 33.24, 131.61], ['宮崎県', 31.91, 131.42], ['鹿児島県', 31.56, 130.56], ['沖縄県', 26.21, 127.68]];
+const wmo = c => c === 0 ? '☀️' : c <= 2 ? '🌤️' : c === 3 ? '☁️' : c <= 48 ? '🌫️' : c <= 57 ? '🌦️' : c <= 67 ? '🌧️' : c <= 77 ? '🌨️' : c <= 82 ? '🌦️' : c <= 86 ? '🌨️' : '⛈️';
+// 今日を含む週(日〜土)の7日分
+function weekDays() {
+  const t = todayStr();
+  const s = addDays(t, -fromYmd(t).getDay());
+  return Array.from({ length: 7 }, (_, k) => addDays(s, k));
+}
+async function loadWeather(force = false) {
+  const pref = S.set.pref, pr = PREFS.find(p => p[0] === pref);
+  if (!pr || S.wBusy) return;
+  const w = S.set.weather, t = todayStr();
+  if (!force && w && w.pref === pref && w.date === t && Date.now() - w.at < 3 * 3600e3) return;
+  if (!force && S.wFail && Date.now() - S.wFail < 5 * 60e3) return; // 失敗直後は再試行しない
+  S.wBusy = true;
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${pr[1]}&longitude=${pr[2]}&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=Asia%2FTokyo&past_days=7&forecast_days=7`;
+    const ac = new AbortController(), to = setTimeout(() => ac.abort(), 8000);
+    const r = await fetch(url, { signal: ac.signal });
+    clearTimeout(to);
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    const days = j.daily.time.map((d, k) => ({ date: d, code: j.daily.weather_code[k], max: j.daily.temperature_2m_max[k], min: j.daily.temperature_2m_min[k] }));
+    await saveSet('weather', { pref, date: t, at: Date.now(), days });
+    S.wFail = 0;
+  } catch { S.wFail = Date.now(); }
+  finally { S.wBusy = false; }
+  if (S.tab === 'home' && S.detail == null) render();
+}
+function weatherCard() {
+  const pref = S.set.pref, w = S.set.weather, t = todayStr();
+  const has = w && w.pref === pref;
+  let body;
+  if (!pref) body = `<div class="wmsg">地域を選ぶと、今週の天気を表示します。<small>選んだ都道府県のおおよその座標だけを、天気サービス(Open-Meteo)に送ります。</small></div>`;
+  else {
+    const map = new Map((has ? w.days : []).map(d => [d.date, d]));
+    body = `<div class="wk">${weekDays().map(ds => {
+      const d = map.get(ds), dt = fromYmd(ds);
+      return `<button class="wd ${ds === t ? 'today' : ''}" data-act="goto-day" data-v="${ds}"><span class="w1">${WD[dt.getDay()]}</span><span class="w2">${dt.getDate()}</span><span class="w3">${d ? wmo(d.code) : '–'}</span><span class="w4 hi">${d ? Math.round(d.max) + '°' : '–'}</span><span class="w4 lo">${d ? Math.round(d.min) + '°' : '–'}</span></button>`;
+    }).join('')}</div>${has ? '' : `<div class="wmsg">${S.wFail && !S.wBusy ? '天気を取得できませんでした（通信を確認してください）' : '取得中…'}</div>`}`;
+  }
+  return `<div class="wcard"><div class="wh"><b>今週の天気</b><button class="chip" data-act="pick-pref">📍 ${pref ? esc(pref) : '地域を選ぶ'}</button></div>${body}</div>`;
+}
+function prefSheet() {
+  openSheet(`<h2>天気の地域</h2>
+    <label class="fld">都道府県<select id="pref-sel"><option value="">天気を表示しない</option>${PREFS.map(p => `<option value="${p[0]}" ${S.set.pref === p[0] ? 'selected' : ''}>${p[0]}</option>`).join('')}</select></label>
+    <p class="nil" style="margin-bottom:12px">選んだ都道府県の県庁所在地あたりの座標だけを、天気サービス（Open-Meteo）に送ります。位置情報の許可は不要です。</p>
+    <button class="primary" data-act="save-pref">保存</button><button class="ghost" data-act="close-sheet">キャンセル</button>`);
+}
+
 /* ---------- ホーム ---------- */
+// 今日から週末までに水やり予定が入る日(期限超過は今日に寄せ、周期どおりに水やりした場合の予定も展開)
+function scheduleDates(p, i, end) {
+  if (p.paused || i.until === null) return [];
+  const t = todayStr(), out = [];
+  let d = i.due < t ? t : i.due;
+  while (d <= end) {
+    out.push(d);
+    const iv = Number(p.iv?.[seasonOf(d)]) || 0;
+    if (iv <= 0) break;
+    d = addDays(d, iv);
+  }
+  return out;
+}
+function todayRow({ p, i }) {
+  const sub = `<small class="${i.until < 0 ? 'late' : ''}">${lastLabel(i)} ・ ${nextLabel(i, true)}</small>`;
+  return `<div class="item"><div class="thumb" style="${bgOf(p)}" data-act="open" data-id="${p.id}">${bgInner(p)}</div>
+    <div class="n" data-act="open" data-id="${p.id}">${esc(p.name)}${sub}</div>
+    <button class="btn rec ${i.wToday ? 'done' : ''}" data-act="rec" data-t="water" data-id="${p.id}">💧 ${i.wToday ? '済' : '水やり'}</button>
+    <button class="btn f rec ${i.fToday ? 'done' : ''}" data-act="rec" data-t="fert" data-id="${p.id}">🌱 ${i.fToday ? '済' : '肥料'}</button></div>`;
+}
+const dayRow = (p, ic, label) => `<div class="drow" data-act="open" data-id="${p.id}"><div class="thumb s" style="${bgOf(p)}">${bgInner(p)}</div><span class="dn2">${esc(p.name)}</span><small>${ic} ${label}</small></div>`;
+function scheduleView() {
+  const t = todayStr(), days = weekDays(), end = days[6];
+  const infos = S.plants.map(p => ({ p, i: info(p) }));
+  if (!S.openDays) S.openDays = new Set([t]);
+  let h = '<div class="sec" style="margin-top:6px">📅 今週の予定 <span>・水やりは予定、肥料は記録済みのみ</span></div>';
+  for (const ds of days) {
+    const dt = fromYmd(ds), isToday = ds === t, past = ds < t;
+    let rows = '', nw = 0, nf = 0;
+    if (past) {
+      const ls = S.logs.filter(l => l.date === ds && (l.type === 'water' || l.type === 'fert')).sort((a, b) => a.ts - b.ts);
+      for (const l of ls) { const p = plantOf(l.plantId); if (!p) continue; rows += dayRow(p, ICON[l.type], LABEL[l.type] + '済み'); l.type === 'water' ? nw++ : nf++; }
+    } else if (isToday) {
+      const list = infos.filter(x => !x.p.paused && ((x.i.until !== null && x.i.until <= 0) || x.i.wToday || x.i.fToday))
+        .sort((a, b) => (a.i.until ?? 9e9) - (b.i.until ?? 9e9));
+      rows = list.map(todayRow).join('');
+      nw = list.filter(x => !x.i.wToday).length; nf = list.filter(x => x.i.fToday).length;
+    } else {
+      for (const { p, i } of infos) if (scheduleDates(p, i, end).includes(ds)) { rows += dayRow(p, '💧', '水やり予定'); nw++; }
+    }
+    const open = S.openDays.has(ds);
+    h += `<div class="dsec" id="d-${ds}"><button class="dh ${open ? 'open' : ''}" data-act="toggle-day" data-v="${ds}"><span class="dn">${isToday ? '今日' : WD[dt.getDay()] + '曜日'}</span><span class="dd">${fmtMD(ds)}</span><span class="dc">${nw ? `💧${nw}` : ''}${nf ? ` 🌱${nf}` : ''}</span><span class="car">▾</span></button>${open ? `<div class="db">${rows || `<div class="nil" style="padding:8px 0">${past ? '記録はありません' : '予定はありません'}</div>`}</div>` : ''}</div>`;
+  }
+  return h;
+}
 function homeView() {
   const t = new Date();
-  const list = S.plants.filter(p => !p.paused).map(p => ({ p, i: info(p) }))
-    .filter(x => (x.i.until !== null && x.i.until <= 0) || x.i.wToday || x.i.fToday)
-    .sort((a, b) => (a.i.until ?? 9e9) - (b.i.until ?? 9e9));
-  const todo = list.filter(x => x.i.until !== null && x.i.until <= 0 && !x.i.wToday).length;
   // 植物があるのに、バックアップ未実施または7日以上経過なら促す
   const age = backupAge();
   const needBackup = S.plants.length > 0 && !S.hideBackup && (age === null || age >= BACKUP_DAYS);
   let h = needBackup ? `<div class="warnbox"><b>💾 バックアップをおすすめします</b><span>${age === null ? 'まだ書き出していません。' : `最後のバックアップから${age}日たっています。`}アイコンの削除や機種変更でデータが消えるため、定期的に書き出してください。</span><div class="wb"><button class="primary" data-act="export">今すぐ書き出す</button><button class="ghost" data-act="hide-backup">あとで</button></div></div>` : '';
-  h += `<h2 class="pg">${t.getMonth() + 1}月${t.getDate()}日 ${WD[t.getDay()]}曜日 ・ 全${S.plants.length}株</h2>
-    <div class="sec">💧 今日の水やり <span>・残り${todo}株</span></div>`;
-  if (!S.plants.length) h += `<div class="empty">まだ植物がありません。<br>右下の ＋ から登録しましょう。</div>`;
-  else if (!list.length) h += `<div class="empty">今日水やりが必要な植物はありません 🌿</div>`;
-  for (const { p, i } of list) {
-    const sub = `<small class="${i.until < 0 ? 'late' : ''}">${lastLabel(i)} ・ ${nextLabel(i, true)}</small>`;
-    h += `<div class="item"><div class="thumb" style="${bgOf(p)}" data-act="open" data-id="${p.id}">${bgInner(p)}</div>
-      <div class="n" data-act="open" data-id="${p.id}">${esc(p.name)}${sub}</div>
-      <button class="btn rec ${i.wToday ? 'done' : ''}" data-act="rec" data-t="water" data-id="${p.id}">💧 ${i.wToday ? '済' : '水やり'}</button>
-      <button class="btn f rec ${i.fToday ? 'done' : ''}" data-act="rec" data-t="fert" data-id="${p.id}">🌱 ${i.fToday ? '済' : '肥料'}</button></div>`;
-  }
+  h += `<h2 class="pg">${t.getMonth() + 1}月${t.getDate()}日 ${WD[t.getDay()]}曜日 ・ 全${S.plants.length}株</h2>${weatherCard()}`;
+  h += S.plants.length ? scheduleView() : `<div class="empty">まだ植物がありません。<br>右下の ＋ から登録しましょう。</div>`;
   return h;
 }
 
@@ -340,7 +424,7 @@ const b2d = b => new Promise(r => { if (!b) return r(null); const f = new FileRe
 async function exportAll() {
   const plants = await Promise.all(S.plants.map(async p => ({ ...p, photo: await b2d(p.photo) })));
   const logs = await Promise.all(S.logs.map(async l => ({ ...l, photo: await b2d(l.photo) })));
-  const data = { app: 'plantslife', version: 1, exportedAt: new Date().toISOString(), plants, logs, settings: S.set };
+  const data = { app: 'plantslife', version: 1, exportedAt: new Date().toISOString(), plants, logs, settings: { ...S.set, weather: undefined } };
   const name = `plantslife-${todayStr()}.json`;
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const file = new File([blob], name, { type: 'application/json' });
@@ -461,6 +545,7 @@ function render() {
   const v = $('#view');
   v.innerHTML = { home: homeView, list: listView, hist: histView, data: dataView }[S.tab]();
   if (S.tab === 'list') renderGrid();
+  if (S.tab === 'home') loadWeather(); // 非同期。取得できたらホームを再描画する
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.t === S.tab));
   $('#fab').classList.toggle('hide', !(S.tab === 'home' || S.tab === 'list'));
   renderDetail();
@@ -548,6 +633,14 @@ document.addEventListener('click', async e => {
       case 'update-app': await updateApp(); break;
       case 'export': await backupNow(); break;
       case 'hide-backup': S.hideBackup = true; render(); break;
+      case 'pick-pref': prefSheet(); break;
+      case 'save-pref': {
+        const v = $('#pref-sel').value;
+        await saveSet('pref', v); await saveSet('weather', null); S.wFail = 0;
+        closeSheet(); render(); break;
+      }
+      case 'toggle-day': { const d = el.dataset.v; S.openDays.has(d) ? S.openDays.delete(d) : S.openDays.add(d); render(); break; }
+      case 'goto-day': { S.openDays.add(el.dataset.v); render(); $('#d-' + el.dataset.v)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }
       case 'import': { const f = $('#import'); f.value = ''; f.onchange = () => f.files[0] && importAll(f.files[0]); f.click(); break; }
     }
   } catch (err) { console.error(err); toast('エラーが発生しました'); }
