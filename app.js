@@ -1,7 +1,7 @@
 'use strict';
 /* PlantsLife - 植物管理PWA。データは端末内(IndexedDB)のみに保存し、外部へ送信しない。 */
 
-const APP_VERSION = 'v5'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
+const APP_VERSION = 'v6'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
 
 /* ---------- ユーティリティ ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -204,7 +204,11 @@ function homeView() {
     .filter(x => (x.i.until !== null && x.i.until <= 0) || x.i.wToday || x.i.fToday)
     .sort((a, b) => (a.i.until ?? 9e9) - (b.i.until ?? 9e9));
   const todo = list.filter(x => x.i.until !== null && x.i.until <= 0 && !x.i.wToday).length;
-  let h = `<h2 class="pg">${t.getMonth() + 1}月${t.getDate()}日 ${WD[t.getDay()]}曜日 ・ 全${S.plants.length}株</h2>
+  // 植物があるのに、バックアップ未実施または7日以上経過なら促す
+  const age = backupAge();
+  const needBackup = S.plants.length > 0 && !S.hideBackup && (age === null || age >= BACKUP_DAYS);
+  let h = needBackup ? `<div class="warnbox"><b>💾 バックアップをおすすめします</b><span>${age === null ? 'まだ書き出していません。' : `最後のバックアップから${age}日たっています。`}アイコンの削除や機種変更でデータが消えるため、定期的に書き出してください。</span><div class="wb"><button class="primary" data-act="export">今すぐ書き出す</button><button class="ghost" data-act="hide-backup">あとで</button></div></div>` : '';
+  h += `<h2 class="pg">${t.getMonth() + 1}月${t.getDate()}日 ${WD[t.getDay()]}曜日 ・ 全${S.plants.length}株</h2>
     <div class="sec">💧 今日の水やり <span>・残り${todo}株</span></div>`;
   if (!S.plants.length) h += `<div class="empty">まだ植物がありません。<br>右下の ＋ から登録しましょう。</div>`;
   else if (!list.length) h += `<div class="empty">今日水やりが必要な植物はありません 🌿</div>`;
@@ -314,7 +318,8 @@ function dataView() {
   const th = S.set.theme || 'auto';
   return `<div class="day"><h3>表示テーマ</h3><div class="themes">${[['auto', '端末に合わせる'], ['light', 'ライト'], ['dark', 'ダーク']].map(([k, n]) => `<button class="${th === k ? 'on' : ''}" data-act="set-theme" data-v="${k}">${n}</button>`).join('')}</div></div>
     <div class="day"><h3>データのバックアップ</h3>
-    <p style="font-size:13px;color:var(--sub);margin-bottom:10px">植物・記録・写真はこの端末内にだけ保存されています。機種変更や削除に備えて、定期的に書き出してください。</p>
+    <div class="warnbox" style="margin:0 0 12px"><b>⚠ ホーム画面のアイコンを削除すると、データも消えます</b><span>アイコンの作り直しや機種変更の前に、必ず書き出してください。植物・記録・写真はこの端末内にだけ保存されています。</span></div>
+    <div class="row">最後のバックアップ<small>${S.set.lastBackup ? fmtDT(S.set.lastBackup) : '未実施'}</small></div>
     <button class="primary" data-act="export">バックアップを書き出す（JSON）</button>
     <button class="ghost" data-act="import">バックアップから復元</button>
     <p style="font-size:12px;color:var(--sub);margin-top:10px">復元すると現在のデータは置き換えられます。</p></div>
@@ -332,13 +337,21 @@ async function exportAll() {
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const file = new File([blob], name, { type: 'application/json' });
   try {
-    if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file] }); return; }
-  } catch (e) { if (e.name === 'AbortError') return; }
+    if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file] }); return true; }
+  } catch (e) { if (e.name === 'AbortError') return false; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  return true;
 }
+// 書き出しに成功したら最終バックアップ日時を記録する(共有をキャンセルした場合は記録しない)
+async function backupNow() {
+  if (await exportAll()) { await saveSet('lastBackup', Date.now()); render(); toast('バックアップを書き出しました'); }
+}
+const BACKUP_DAYS = 7;
+const backupAge = () => S.set.lastBackup ? Math.floor((Date.now() - S.set.lastBackup) / 864e5) : null;
+const fmtDT = ms => { const d = new Date(ms); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 async function importAll(file) {
   let data;
   try { data = JSON.parse(await file.text()); } catch { return toast('ファイルを読み込めませんでした'); }
@@ -525,7 +538,8 @@ document.addEventListener('click', async e => {
         break;
       }
       case 'update-app': await updateApp(); break;
-      case 'export': await exportAll(); break;
+      case 'export': await backupNow(); break;
+      case 'hide-backup': S.hideBackup = true; render(); break;
       case 'import': { const f = $('#import'); f.value = ''; f.onchange = () => f.files[0] && importAll(f.files[0]); f.click(); break; }
     }
   } catch (err) { console.error(err); toast('エラーが発生しました'); }
