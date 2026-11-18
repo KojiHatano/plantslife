@@ -1,7 +1,7 @@
 'use strict';
 /* PlantsLife - 植物管理PWA。データは端末内(IndexedDB)のみに保存し、外部へ送信しない。 */
 
-const APP_VERSION = 'v8'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
+const APP_VERSION = 'v9'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
 
 /* ---------- ユーティリティ ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -557,7 +557,10 @@ function render() {
 async function updateApp() {
   let latest;
   try {
-    const t = await (await fetch('app.js', { cache: 'no-store' })).text();
+    // ?nocache= を付けると、Service Workerのキャッシュを通さずネットワークから最新を取得する
+    const res = await fetch(`app.js?nocache=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    const t = await res.text();
     latest = (t.match(/APP_VERSION\s*=\s*'([^']+)'/) || [])[1];
   } catch { return toast('確認できませんでした（オフラインの可能性があります）'); }
   if (!latest) return toast('バージョンを確認できませんでした');
