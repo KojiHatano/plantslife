@@ -1,7 +1,7 @@
 'use strict';
 /* PlantsLife - 植物管理PWA。データは端末内(IndexedDB)のみに保存し、外部へ送信しない。 */
 
-const APP_VERSION = 'v6'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
+const APP_VERSION = 'v7'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
 
 /* ---------- ユーティリティ ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -213,7 +213,7 @@ function homeView() {
   if (!S.plants.length) h += `<div class="empty">まだ植物がありません。<br>右下の ＋ から登録しましょう。</div>`;
   else if (!list.length) h += `<div class="empty">今日水やりが必要な植物はありません 🌿</div>`;
   for (const { p, i } of list) {
-    const sub = i.until < 0 ? `<small class="late">${-i.until}日超過</small>` : i.until === 0 ? '<small>今日</small>' : '<small>水やり済み</small>';
+    const sub = `<small class="${i.until < 0 ? 'late' : ''}">${lastLabel(i)} ・ ${nextLabel(i, true)}</small>`;
     h += `<div class="item"><div class="thumb" style="${bgOf(p)}" data-act="open" data-id="${p.id}">${bgInner(p)}</div>
       <div class="n" data-act="open" data-id="${p.id}">${esc(p.name)}${sub}</div>
       <button class="btn rec ${i.wToday ? 'done' : ''}" data-act="rec" data-t="water" data-id="${p.id}">💧 ${i.wToday ? '済' : '水やり'}</button>
@@ -234,13 +234,21 @@ function sortedPlants() {
   if (S.set.rev) a.reverse();
   return a;
 }
+// 前回水やり日 / 次回水やり予定日の表示文字列
+const lastLabel = i => `前回 ${i.lw ? fmtMD(i.lw) : '未記録'}`;
+function nextLabel(i, long = false) {
+  if (i.until === null) return '次回 未設定';
+  if (i.until < 0) return long ? `次回 ${fmtMD(i.due)}（${-i.until}日超過）` : `次回 ${fmtMD(i.due)}(超過)`;
+  return i.until === 0 ? '次回 今日' : `次回 ${fmtMD(i.due)}`;
+}
 function cardHtml({ p, i }) {
   const status = i.since === null ? '水やり 未記録' : `水やり ${i.since === 0 ? '今日' : i.since + '日前'}`;
   const late = !p.paused && i.until !== null && i.until < 0;
   const ic = (i.wToday ? '<i>💧</i>' : '') + (i.fToday ? '<i class="f">🌱</i>' : '');
   return `<div class="card${p.paused ? ' paused' : ''}" data-act="card" data-id="${p.id}">
     <div class="ph" style="${bgOf(p)}">${bgInner(p)}${p.paused ? '<div class="zz"><div>Zzz…<small>管理休止中</small></div></div>' : `<span class="tag${late ? ' late' : ''}">${status}</span>`}${ic ? `<div class="rec-ic">${ic}</div>` : ''}</div>
-    <div class="nm">${esc(p.name)}<small class="${late ? 'late' : ''}">${p.paused ? '💤 管理休止中' : status}</small></div>
+    <div class="nm">${esc(p.name)}<small class="${late ? 'late' : ''}">${p.paused ? '💤 管理休止中' : `${lastLabel(i)} ・ ${nextLabel(i, true)}`}</small></div>
+    ${p.paused ? '' : `<div class="dts"><span>${lastLabel(i)}</span><span class="${late ? 'late' : ''}">${nextLabel(i)}</span></div>`}
     <div class="rl">${ic}</div></div>`;
 }
 function renderGrid() {
