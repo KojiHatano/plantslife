@@ -1,7 +1,7 @@
 'use strict';
 /* PlantsLife - 植物管理PWA。データは端末内(IndexedDB)のみに保存し、外部へ送信しない。 */
 
-const APP_VERSION = 'v10'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
+const APP_VERSION = 'v11'; // リリースごとに上げる(更新ボタンの新旧判定に使う)
 
 /* ---------- ユーティリティ ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -97,9 +97,47 @@ function pickFile(cb, opts = {}) {
   f.onchange = async () => {
     const file = f.files[0];
     if (!file) return;
-    try { const b = await openCrop(file, opts); if (b) cb(b); } catch { toast('画像を読み込めませんでした'); }
+    try {
+      const date = await photoDate(file); // 切り抜きでEXIFが失われるため、先に写真の日付を読む
+      const b = await openCrop(file, opts);
+      if (b) cb(b, date);
+    } catch { toast('画像を読み込めませんでした'); }
   };
   f.click();
+}
+
+// 写真の日付(YYYY-MM-DD): EXIFの撮影日 → ファイルの保存日 → 今日。将来の日付は今日に直す。
+async function exifDate(file) {
+  try {
+    const v = new DataView(await file.slice(0, 262144).arrayBuffer());
+    if (v.getUint16(0) !== 0xFFD8) return null; // JPEG以外(HEIC等)は保存日にフォールバック
+    for (let o = 2; o + 4 < v.byteLength;) {
+      if (v.getUint8(o) !== 0xFF) break;
+      const mk = v.getUint8(o + 1), len = v.getUint16(o + 2);
+      if (mk === 0xE1 && v.getUint32(o + 4) === 0x45786966) { // APP1 'Exif'
+        const t = o + 10, le = v.getUint16(t) === 0x4949;
+        const u16 = p => v.getUint16(t + p, le), u32 = p => v.getUint32(t + p, le);
+        const ascii = (p, n) => { let s = ''; for (let i = 0; i < n - 1; i++) s += String.fromCharCode(v.getUint8(t + p + i)); return s; };
+        const tag = (ifd, want) => { const n = u16(ifd); for (let k = 0; k < n; k++) { const e = ifd + 2 + k * 12; if (u16(e) === want) return { count: u32(e + 4), val: e + 8 }; } return null; };
+        const ifd0 = u32(4);
+        let dt = null;
+        const ex = tag(ifd0, 0x8769); // Exif IFD へのポインタ
+        if (ex) { const e = tag(u32(ex.val), 0x9003) || tag(u32(ex.val), 0x9004); if (e) dt = ascii(u32(e.val), e.count); } // 撮影日時 / デジタル化日時
+        if (!dt) { const e = tag(ifd0, 0x0132); if (e) dt = ascii(u32(e.val), e.count); } // 更新日時
+        const m = dt && dt.match(/^(\d{4}):(\d{2}):(\d{2})/);
+        return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+      }
+      o += 2 + len;
+    }
+  } catch { /* 無視 */ }
+  return null;
+}
+async function photoDate(file) {
+  const t = todayStr();
+  let d = await exifDate(file);
+  if (!d && file.lastModified) d = ymd(new Date(file.lastModified));
+  if (!d || d < '1990-01-01' || d > t) d = t;
+  return d;
 }
 
 // 切り抜き画面(正方形)。ピンチ/ドラッグ/スライダー/ホイールで範囲を決める。Blob、キャンセル時はnullで解決
@@ -298,7 +336,7 @@ function homeView() {
   const needBackup = S.plants.length > 0 && !S.hideBackup && (age === null || age >= BACKUP_DAYS);
   let h = needBackup ? `<div class="warnbox"><b>💾 バックアップをおすすめします</b><span>${age === null ? 'まだ書き出していません。' : `最後のバックアップから${age}日たっています。`}アイコンの削除や機種変更でデータが消えるため、定期的に書き出してください。</span><div class="wb"><button class="primary" data-act="export">今すぐ書き出す</button><button class="ghost" data-act="hide-backup">あとで</button></div></div>` : '';
   h += `<h2 class="pg">${t.getMonth() + 1}月${t.getDate()}日 ${WD[t.getDay()]}曜日 ・ 全${S.plants.length}株</h2>${weatherCard()}`;
-  h += S.plants.length ? scheduleView() : `<div class="empty">まだ植物がありません。<br>右下の ＋ から登録しましょう。</div>`;
+  h += S.plants.length ? scheduleView() : `<div class="empty">まだ植物がありません。<br>「植物一覧」の右下の ＋ から登録しましょう。</div>`;
   return h;
 }
 
@@ -543,7 +581,7 @@ function render() {
   if (S.tab === 'list') renderGrid();
   if (S.tab === 'home') loadWeather(); // 非同期。取得できたらホームを再描画する
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.t === S.tab));
-  $('#fab').classList.toggle('hide', !(S.tab === 'home' || S.tab === 'list'));
+  $('#fab').classList.toggle('hide', S.tab !== 'list'); // 植物の追加は植物一覧だけ
   renderDetail();
 }
 
@@ -610,9 +648,12 @@ document.addEventListener('click', async e => {
       case 'sel-day': S.sel = el.dataset.v; render(); break;
       case 'pause': { const p = plantOf(id); p.paused = !p.paused; await savePlant(p); renderDetail(); toast(p.paused ? '管理休止にしました' : '管理を再開しました'); break; }
       case 'add-log': logForm(id, el.dataset.t); break;
-      case 'pick-log-photo': pickFile(b => { logPhoto = b; const pv = $('#pv'); pv.style.backgroundImage = `url('${URL.createObjectURL(b)}')`; pv.textContent = ''; }, { skip: true }); break;
+      case 'pick-log-photo': pickFile((b, d) => {
+        logPhoto = b; const pv = $('#pv'); pv.style.backgroundImage = `url('${URL.createObjectURL(b)}')`; pv.textContent = '';
+        $('#l-date').value = d; toast(`写真の日付（${fmtMD(d)}）を設定しました`); // 日付は変更できる
+      }, { skip: true }); break;
       case 'save-log': await submitLog(id, el.dataset.t); break;
-      case 'quick-photo': pickFile(async b => { await addLog(id, 'note', { photo: b }); render(); toast('写真を追加しました'); }, { skip: true }); break;
+      case 'quick-photo': pickFile(async (b, d) => { await addLog(id, 'note', { photo: b, date: d }); render(); toast(`写真を追加しました（${fmtMD(d)}）`); }, { skip: true }); break;
       case 'change-photo': pickFile(async b => { const p = plantOf(id); p.photo = b; await savePlant(p); render(); }); break;
       case 'del-log': if (confirm('この記録を削除しますか？')) { await delLog(+el.dataset.lid); render(); } break;
       case 'view-photo': {
