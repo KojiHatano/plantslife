@@ -56,6 +56,9 @@ h2.pg{font-size:13px;color:var(--sub);font-weight:600;margin:2px 4px 12px}
 .zz small{display:block;font-size:10px;font-weight:600;font-style:normal;text-align:center;letter-spacing:.05em}
 .card.flash{animation:fl .5s}@keyframes fl{0%{box-shadow:0 0 0 3px var(--green)}100%{box-shadow:0 0 0 0 transparent}}
 .card .nm small{display:none}
+.dts{display:flex;flex-direction:column;gap:1px;padding:0 8px 8px;margin-top:-4px;font-size:10px;line-height:1.4;color:var(--sub);white-space:nowrap}
+.dts .late{color:var(--warn);font-weight:600}
+.grid.lst .card .dts{display:none}
 .grid.lst .card{display:flex;align-items:center;gap:12px;padding:8px 12px}
 .grid.lst .card .ph{width:48px;height:48px;aspect-ratio:auto;border-radius:50%;flex:none;font-size:22px}
 .grid.lst .card .ph .tag,.grid.lst .card .ph .rec-ic,.grid.lst .card .ph .zz{display:none}
@@ -88,7 +91,7 @@ h2.pg{font-size:13px;color:var(--sub);font-weight:600;margin:2px 4px 12px}
 /* fab + nav */
 .fab{position:fixed;right:max(18px,calc(50% - 222px));bottom:calc(env(safe-area-inset-bottom) + 96px);width:56px;height:56px;border-radius:50%;border:0;background:var(--green);color:#fff;font-size:30px;box-shadow:0 6px 16px #5d8f4366;z-index:5}
 .fab.hide{display:none}
-nav{position:fixed;left:50%;transform:translateX(-50%);width:min(452px,calc(100% - 28px));bottom:calc(env(safe-area-inset-bottom) + 10px);display:grid;grid-template-columns:repeat(4,1fr);background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:28px;padding:6px;box-shadow:0 4px 20px #0000001f;z-index:5}
+nav{position:fixed;left:50%;transform:translateX(-50%);width:min(452px,calc(100% - 28px));bottom:calc(env(safe-area-inset-bottom) + 10px);display:grid;grid-template-columns:repeat(3,1fr);background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:28px;padding:6px;box-shadow:0 4px 20px #0000001f;z-index:5}
 nav button{border:0;background:none;color:var(--sub);font-size:11px;font-weight:600;padding:8px 0;border-radius:22px;white-space:nowrap;min-height:52px}
 nav button .g{display:block;font-size:20px;line-height:1.1}
 nav button.on{background:var(--green-soft);color:var(--green-d)}
